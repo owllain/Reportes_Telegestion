@@ -132,7 +132,7 @@ export default function SMSReportGenerator() {
         <div className="container mx-auto px-4">
           <h1 className="text-3xl font-bold flex items-center gap-3">
             <FileSpreadsheet className="w-8 h-8" />
-            Generador de Reportes SMS
+            Reportes Telegestion
           </h1>
           <p className="text-red-100 mt-2">Automatización de reportes de envío de SMS</p>
         </div>
@@ -175,7 +175,7 @@ export default function SMSReportGenerator() {
             <div className="space-y-2">
               <Label className="text-base font-semibold flex items-center gap-2">
                 <FileSpreadsheet className="w-5 h-5" />
-                Archivo SMS Selección (XLSX)
+                Archivo SMS (XLSX)
               </Label>
               <div className="flex items-center gap-4">
                 <Input
@@ -288,8 +288,8 @@ export default function SMSReportGenerator() {
             <div className="flex gap-3">
               <span className="bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center font-bold text-sm flex-shrink-0">2</span>
               <p className="text-sm">
-                <strong>Archivo SMS Selección (XLSX):</strong> Base de envíos con Teléfono (sin 506) y Mensaje. 
-                Este archivo define qué registros incluir en el reporte.
+                <strong>Archivo SMS (XLSX):</strong> Base de envíos con Teléfono (sin 506) y Mensaje. 
+                Este archivo define qué registros incluir en el reporte. (Registro original obtenido de FTP)
               </p>
             </div>
             <div className="flex gap-3">
@@ -307,7 +307,7 @@ export default function SMSReportGenerator() {
 
       <footer className="bg-red-600 text-white py-4 mt-auto">
         <div className="container mx-auto px-4 text-center">
-          <p className="text-sm">© 2026 Sistema de Reportes SMS | Powered by Claro</p>
+          <p className="text-sm">© 2026 Sistema de Reportes SMS | Powered by Alvaro Enrique Cascante Moraga</p>
         </div>
       </footer>
     </div>
