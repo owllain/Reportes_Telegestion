@@ -29,34 +29,48 @@ export async function POST(req: NextRequest) {
     const csvBuffer = Buffer.from(await csvFile.arrayBuffer());
     const xlsxBuffer = Buffer.from(await xlsxFile.arrayBuffer());
 
-    // 1. Procesar CSV (Reporte Claro)
-    // El formato esperado es: Fecha, Hora, Destino, Mensaje, Usuario, Total Enviados, Estado
-    const csvRecords = parse(csvBuffer, {
-      columns: [
-        "Fecha",
-        "Hora",
-        "Destino",
-        "Mensaje",
-        "Usuario",
-        "Total Enviados",
-        "Estado",
-      ],
+    // 1. Procesar CSV (Reporte Claro / Formato Genérico)
+    const csvRecordsRaw = parse(csvBuffer, {
+      columns: true,
       skip_empty_lines: true,
       relax_column_count: true,
       trim: true,
     });
 
+    // Normalizar registros para que sean compatibles con ambos formatos
+    const csvRecords = csvRecordsRaw.map((record: any) => {
+      let fecha = record.Fecha || "";
+      let hora = record[""] || record.Hora || ""; // El formato antiguo tiene una columna vacía o "Hora"
+
+      // Si no hay Hora pero la Fecha contiene un espacio (formato genérico "YYYY-MM-DD HH:mm")
+      if ((!hora || hora === "") && fecha.includes(" ")) {
+        const parts = fecha.split(" ");
+        fecha = parts[0];
+        hora = parts[1];
+      }
+
+      return {
+        Fecha: fecha,
+        Hora: hora,
+        Destino: record.Destino,
+        Mensaje: record.Mensaje,
+        Usuario: record.Usuario,
+        "Total Enviados": record["Total Enviados"],
+        Estado: record.Estado,
+      };
+    });
+
     // 2. Procesar XLSX (Base SMS Selección)
     const baseWorkbook = new ExcelJS.Workbook();
-    await baseWorkbook.xlsx.load(xlsxBuffer);
+    await baseWorkbook.xlsx.load(xlsxBuffer as any);
     const baseSheet = baseWorkbook.worksheets[0];
 
     const baseData: { Telefono1: string; Mensaje: string }[] = [];
     baseSheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return; // Saltar encabezado
 
-      const telefono = row.getCell(1).value?.toString() || "";
-      const mensaje = row.getCell(2).value?.toString() || "";
+      const telefono = row.getCell(1).value?.toString().trim() || "";
+      const mensaje = row.getCell(2).value?.toString().trim() || "";
 
       if (telefono) {
         baseData.push({
@@ -68,10 +82,17 @@ export async function POST(req: NextRequest) {
 
     // Mapeo para búsqueda rápida: Telefono con 506 -> Mensaje
     const telefonosBase = new Set(
-      baseData.map((d) => "506" + d.Telefono1.trim()),
+      baseData.map((d) =>
+        d.Telefono1.startsWith("506") ? d.Telefono1 : "506" + d.Telefono1,
+      ),
     );
     const mensajesBaseMap = new Map(
-      baseData.map((d) => ["506" + d.Telefono1.trim(), d.Mensaje]),
+      baseData.map((d) => {
+        const tel = d.Telefono1.startsWith("506")
+          ? d.Telefono1
+          : "506" + d.Telefono1;
+        return [tel, d.Mensaje];
+      }),
     );
 
     // 3. Filtrar CSV según la BASE
@@ -79,7 +100,16 @@ export async function POST(req: NextRequest) {
       const destino = row.Destino?.toString().trim();
       if (telefonosBase.has(destino)) {
         const expectedMsg = mensajesBaseMap.get(destino);
-        return expectedMsg && row.Mensaje === expectedMsg;
+        // Normalizar mensajes para comparación (quitar espacios extra y saltos de línea)
+        const currentMsg = row.Mensaje?.toString()
+          .replace(/\r?\n|\r/g, " ")
+          .trim();
+        const normalizedExpected = expectedMsg
+          ?.toString()
+          .replace(/\r?\n|\r/g, " ")
+          .trim();
+
+        return normalizedExpected && currentMsg === normalizedExpected;
       }
       return false;
     });
@@ -98,12 +128,12 @@ export async function POST(req: NextRequest) {
       (acc: number, row: any) => acc + (Number(row["Total Enviados"]) || 0),
       0,
     );
-    const totalEntregados = filteredRows.filter(
-      (row: any) => row.Estado === "ENVIADO",
-    ).length;
     const totalNoEnviados = filteredRows.filter(
-      (row: any) => row.Estado === "ERROR",
+      (row: any) => row.Estado === "ERROR" || row.Estado === "FALLIDO",
     ).length;
+    const totalExcluidos = 0; // "Total de mensajes No Enviados (duplicados/excluidos)"
+    const totalEntregados = totalEnviados - totalNoEnviados - totalExcluidos;
+    
     const mensajeEjemplo = baseData[0]?.Mensaje || "";
     const cantidadProsa = mensajeEjemplo.length;
     const fechaEnvio = filteredRows[0]?.Fecha || "";
@@ -118,13 +148,13 @@ export async function POST(req: NextRequest) {
     const headerFill: ExcelJS.Fill = {
       type: "pattern",
       pattern: "solid",
-      fgColor: { argb: "FFDC2626" },
-    }; // Rojo
+      fgColor: { argb: "FFB4A7D6" }, // Lila
+    };
     const headerFont: Partial<ExcelJS.Font> = {
-      name: "Times New Roman",
+      name: "Calibri",
       size: 11,
       bold: true,
-      color: { argb: "FFFFFFFF" },
+      color: { argb: "FF000000" }, // Negro
     };
     const headerAlignment: Partial<ExcelJS.Alignment> = {
       horizontal: "center",
@@ -138,11 +168,11 @@ export async function POST(req: NextRequest) {
       right: { style: "thin" },
     };
     const cellFont: Partial<ExcelJS.Font> = {
-      name: "Times New Roman",
-      size: 10,
+      name: "Calibri",
+      size: 11,
     };
     const cellAlignment: Partial<ExcelJS.Alignment> = {
-      horizontal: "left",
+      horizontal: "center",
       vertical: "middle",
       wrapText: true,
     };
@@ -207,7 +237,7 @@ export async function POST(req: NextRequest) {
         Mensaje: row.Mensaje,
         Usuario: row.Usuario,
         "Total enviado": row["Total Enviados"],
-        Estado: row.Estado === "ENVIADO" ? "Entregado" : "No enviado",
+        Estado: row.Estado === "ENVIADO" || row.Estado === "ENTREGADO" ? "Entregado" : "No entregado",
         Reflejo: reflection,
         Campaña: campaignName,
         IdCampaña: idCampana,
@@ -253,7 +283,7 @@ export async function POST(req: NextRequest) {
 
     // Datos Fila 2
     const resumenRow2 = wsResumen.addRow([
-      `SMS ${campaignName}`,
+      campaignName,
       totalBase,
       cantidadProsa,
       totalEnviados,
@@ -329,14 +359,14 @@ export async function POST(req: NextRequest) {
     });
 
     // 6. Generar el buffer final
-    const finalBuffer = (await wb.xlsx.writeBuffer()) as Buffer;
+    const finalBuffer = await wb.xlsx.writeBuffer();
 
-    return new NextResponse(finalBuffer, {
+    return new NextResponse(finalBuffer as ArrayBuffer, {
       status: 200,
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="REPORTE SMS ${campaignName}.xlsx"`,
+        "Content-Disposition": `attachment; filename="Reporte_${campaignName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7E]/g, "")}.xlsx"; filename*=UTF-8''${encodeURIComponent("Reporte " + campaignName + ".xlsx")}`,
       },
     });
   } catch (error: any) {

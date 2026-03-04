@@ -12,11 +12,13 @@ export default function SMSReportGenerator() {
   const { toast } = useToast()
   const [csvFile, setCsvFile] = useState<File | null>(null)
   const [xlsxFile, setXlsxFile] = useState<File | null>(null)
-  const [campaignName, setCampaignName] = useState('')
   const [responsible, setResponsible] = useState('')
-  const [reflection, setReflection] = useState('')
+  const [reflection, setReflection] = useState('71984362')
   const [loading, setLoading] = useState(false)
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
+  
+  // Agregar una key para forzar el re-renderizado de los inputs type file
+  const [resetKey, setResetKey] = useState(0)
 
   const handleFileChange = (type: 'csv' | 'xlsx', file: File | null) => {
     if (type === 'csv') {
@@ -31,15 +33,6 @@ export default function SMSReportGenerator() {
       toast({
         title: 'Error',
         description: 'Por favor seleccione ambos archivos (CSV de reporte claro y XLSX de SMS selección)',
-        variant: 'destructive',
-      })
-      return
-    }
-
-    if (!campaignName) {
-      toast({
-        title: 'Error',
-        description: 'Por favor ingrese el nombre de la campaña',
         variant: 'destructive',
       })
       return
@@ -67,10 +60,12 @@ export default function SMSReportGenerator() {
     setDownloadUrl(null)
 
     try {
+      const derivedCampaignName = xlsxFile.name.replace(/\.[^/.]+$/, "")
+
       const formData = new FormData()
       formData.append('csvFile', csvFile)
       formData.append('xlsxFile', xlsxFile)
-      formData.append('campaignName', campaignName)
+      formData.append('campaignName', derivedCampaignName)
       formData.append('responsible', responsible)
       formData.append('reflection', reflection)
 
@@ -116,14 +111,24 @@ export default function SMSReportGenerator() {
   }
 
   const downloadReport = () => {
-    if (downloadUrl) {
+    if (downloadUrl && xlsxFile) {
+      const derivedCampaignName = xlsxFile.name.replace(/\.[^/.]+$/, "")
       const a = document.createElement('a')
       a.href = downloadUrl
-      a.download = `REPORTE SMS ${campaignName}.xlsx`
+      a.download = `Reporte ${derivedCampaignName}.xlsx`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
     }
+  }
+
+  const handleReset = () => {
+    setCsvFile(null)
+    setXlsxFile(null)
+    setResponsible('')
+    setReflection('71984362')
+    setDownloadUrl(null)
+    setResetKey(prevKey => prevKey + 1) // Fuerza re-render de campos file
   }
 
   return (
@@ -155,6 +160,7 @@ export default function SMSReportGenerator() {
               </Label>
               <div className="flex items-center gap-4">
                 <Input
+                  key={`csv-${resetKey}`}
                   type="file"
                   accept=".csv"
                   onChange={(e) => handleFileChange('csv', e.target.files?.[0] || null)}
@@ -179,6 +185,7 @@ export default function SMSReportGenerator() {
               </Label>
               <div className="flex items-center gap-4">
                 <Input
+                  key={`xlsx-${resetKey}`}
                   type="file"
                   accept=".xlsx,.xls"
                   onChange={(e) => handleFileChange('xlsx', e.target.files?.[0] || null)}
@@ -195,25 +202,7 @@ export default function SMSReportGenerator() {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Nombre de la campaña */}
-              <div className="space-y-2">
-                <Label className="text-base font-semibold flex items-center gap-2">
-                  <Calendar className="w-5 h-5" />
-                  Nombre de la Campaña
-                </Label>
-                <Input
-                  type="text"
-                  value={campaignName}
-                  onChange={(e) => setCampaignName(e.target.value)}
-                  placeholder="Ej: SELECCIÓN 05/02/2026"
-                />
-                <p className="text-sm text-gray-500">
-                  Se usará para el IdCampaña (YYYYMM-Nombre)
-                </p>
-              </div>
-
-              {/* Encargado */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">              {/* Encargado */}
               <div className="space-y-2">
                 <Label className="text-base font-semibold flex items-center gap-2">
                   <User className="w-5 h-5" />
@@ -243,7 +232,7 @@ export default function SMSReportGenerator() {
             <div className="flex flex-col sm:flex-row gap-4 pt-4">
               <Button
                 onClick={generateReport}
-                disabled={loading}
+                disabled={loading || !!downloadUrl}
                 className="bg-red-600 hover:bg-red-700 text-white font-semibold py-6 text-lg flex-1"
               >
                 {loading ? (
@@ -260,13 +249,21 @@ export default function SMSReportGenerator() {
               </Button>
 
               {downloadUrl && (
-                <Button
-                  onClick={downloadReport}
-                  className="bg-green-600 hover:bg-green-700 text-white font-semibold py-6 text-lg flex-1"
-                >
-                  <Download className="w-5 h-5 mr-2" />
-                  Descargar Reporte
-                </Button>
+                <>
+                  <Button
+                    onClick={downloadReport}
+                    className="bg-green-600 hover:bg-green-700 text-white font-semibold py-6 text-lg flex-1"
+                  >
+                    <Download className="w-5 h-5 mr-2" />
+                    Descargar
+                  </Button>
+                  <Button
+                    onClick={handleReset}
+                    className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-6 text-lg flex-none px-6"
+                  >
+                    Nuevo Reporte
+                  </Button>
+                </>
               )}
             </div>
           </CardContent>
