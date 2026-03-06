@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import { parse } from "csv-parse/sync";
 
+// Dev: Alvaro Enrique Cascante Moraga
+// Fecha: 05-03-2026
+// Commit: Endpoint de API principal responsable de recibir formData, procesar en memoria arrays cruzados y retornar Buffer XLSX
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
@@ -29,6 +32,9 @@ export async function POST(req: NextRequest) {
     const csvBuffer = Buffer.from(await csvFile.arrayBuffer());
     const xlsxBuffer = Buffer.from(await xlsxFile.arrayBuffer());
 
+    // Dev: Alvaro Enrique Cascante Moraga
+    // Fecha: 05-03-2026
+    // Commit: 1. Procesar CSV (Reporte Claro / Formato Genérico) normalizando columnas dinámicas
     // 1. Procesar CSV (Reporte Claro / Formato Genérico)
     const csvRecordsRaw = parse(csvBuffer, {
       columns: true,
@@ -60,6 +66,9 @@ export async function POST(req: NextRequest) {
       };
     });
 
+    // Dev: Alvaro Enrique Cascante Moraga
+    // Fecha: 05-03-2026
+    // Commit: 2. Extracción de Base SMS tolerante a fallos, permitiendo entrada unificada de XLSX o CSV extrayendo primer y segunda columna
     // 2. Procesar Base SMS (Soporte XLSX y CSV)
     const baseData: { Telefono1: string; Mensaje: string }[] = [];
     const isCsvBase = xlsxFile.name.toLowerCase().endsWith('.csv');
@@ -112,6 +121,9 @@ export async function POST(req: NextRequest) {
       }),
     );
 
+    // Dev: Alvaro Enrique Cascante Moraga
+    // Fecha: 05-03-2026
+    // Commit: 3. Lógica de cruce de datos y filtrado de matriz comparando destinos y estandarizando strings de mensajes
     // 3. Filtrar CSV según la BASE
     let filteredRows = csvRecords.filter((row: any) => {
       const destino = row.Destino?.toString().trim();
@@ -139,6 +151,9 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Dev: Alvaro Enrique Cascante Moraga
+    // Fecha: 05-03-2026
+    // Commit: 4. Extracción de métricas de éxito (Totales de envío, base y entregas restando excluidos)
     // 4. Calcular Estadísticas
     const totalBase = baseData.length;
     const totalEnviados = filteredRows.reduce(
@@ -156,6 +171,9 @@ export async function POST(req: NextRequest) {
     const fechaEnvio = filteredRows[0]?.Fecha || "";
     const horaEnvio = filteredRows[0]?.Hora || "";
 
+    // Dev: Alvaro Enrique Cascante Moraga
+    // Fecha: 05-03-2026
+    // Commit: 5. Creación algorítmica multidimensional del libro de Excel, deshabilitando grids y formateando estilos
     // 5. Crear el nuevo Libro de Excel (Reporte Final)
     const wb = new ExcelJS.Workbook();
     const now = new Date();

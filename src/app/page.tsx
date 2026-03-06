@@ -10,6 +10,9 @@ import { useToast } from '@/hooks/use-toast'
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
+// Dev: Alvaro Enrique Cascante Moraga
+// Fecha: 05-03-2026
+// Commit: Componente raíz para gestionar la interfaz gráfica y los estados del generador SMS
 export default function SMSReportGenerator() {
   const { toast } = useToast()
   const [csvFile, setCsvFile] = useState<File | null>(null)
@@ -24,6 +27,9 @@ export default function SMSReportGenerator() {
   // Agregar una key para forzar el re-renderizado de los inputs type file
   const [resetKey, setResetKey] = useState(0)
 
+  // Dev: Alvaro Enrique Cascante Moraga
+  // Fecha: 05-03-2026
+  // Commit: Manejador de selección de archivos (Soporta múltiples archivos XLSX/CSV)
   const handleFileChange = (type: 'csv' | 'xlsx', files: FileList | null) => {
     if (type === 'csv') {
       setCsvFile(files?.[0] || null)
@@ -32,6 +38,9 @@ export default function SMSReportGenerator() {
     }
   }
 
+  // Dev: Alvaro Enrique Cascante Moraga
+  // Fecha: 05-03-2026
+  // Commit: Bucle principal asíncrono que coordina la carga, envío a API y generación de los reportes lote por lote
   const generateReport = async () => {
     if (!csvFile || xlsxFiles.length === 0) {
       toast({
@@ -133,6 +142,9 @@ export default function SMSReportGenerator() {
     }
   }
 
+  // Dev: Alvaro Enrique Cascante Moraga
+  // Fecha: 05-03-2026
+  // Commit: Función utilitaria para forzar una descarga de archivos manipulando el DOM temporalmente
   const downloadReport = (url: string, filename: string) => {
     const a = document.createElement('a')
     a.href = url
@@ -142,6 +154,9 @@ export default function SMSReportGenerator() {
     document.body.removeChild(a)
   }
 
+  // Dev: Alvaro Enrique Cascante Moraga
+  // Fecha: 05-03-2026
+  // Commit: Automatiza la descarga secuencial de todos los reportes generados insertando retardos seguros
   const downloadAll = () => {
     generatedReports.forEach((report, index) => {
       // Pequeño timeout para no saturar el navegador si son muchos
@@ -149,6 +164,9 @@ export default function SMSReportGenerator() {
     })
   }
 
+  // Dev: Alvaro Enrique Cascante Moraga
+  // Fecha: 05-03-2026
+  // Commit: Restaura todos los estados de React para limpiar la sesión lista para un nuevo set
   const handleReset = () => {
     setCsvFile(null)
     setXlsxFiles([])
