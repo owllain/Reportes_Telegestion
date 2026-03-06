@@ -13,29 +13,30 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 export default function SMSReportGenerator() {
   const { toast } = useToast()
   const [csvFile, setCsvFile] = useState<File | null>(null)
-  const [xlsxFile, setXlsxFile] = useState<File | null>(null)
+  const [xlsxFiles, setXlsxFiles] = useState<File[]>([])
   const [responsible, setResponsible] = useState('')
   const [customResponsible, setCustomResponsible] = useState('')
   const [reflection, setReflection] = useState('71984362')
   const [loading, setLoading] = useState(false)
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
+  const [processingStatus, setProcessingStatus] = useState('')
+  const [generatedReports, setGeneratedReports] = useState<{ url: string; filename: string; originalName: string }[]>([])
   
   // Agregar una key para forzar el re-renderizado de los inputs type file
   const [resetKey, setResetKey] = useState(0)
 
-  const handleFileChange = (type: 'csv' | 'xlsx', file: File | null) => {
+  const handleFileChange = (type: 'csv' | 'xlsx', files: FileList | null) => {
     if (type === 'csv') {
-      setCsvFile(file)
+      setCsvFile(files?.[0] || null)
     } else {
-      setXlsxFile(file)
+      setXlsxFiles(files ? Array.from(files) : [])
     }
   }
 
   const generateReport = async () => {
-    if (!csvFile || !xlsxFile) {
+    if (!csvFile || xlsxFiles.length === 0) {
       toast({
         title: 'Error',
-        description: 'Por favor seleccione ambos archivos (CSV de reporte claro y XLSX de SMS selección)',
+        description: 'Por favor seleccione ambos archivos (CSV de reporte claro y al menos un XLSX/CSV de SMS selección)',
         variant: 'destructive',
       })
       return
@@ -60,82 +61,102 @@ export default function SMSReportGenerator() {
     }
 
     setLoading(true)
-    setDownloadUrl(null)
+    setGeneratedReports([])
+    const newReports: typeof generatedReports = []
+    
+    const finalResponsible = responsible === 'other' ? customResponsible : responsible
 
     try {
-      let derivedCampaignName = xlsxFile.name.replace(/\.[^/.]+$/, "")
-      
-      // Transformar nombre de campaña
-      derivedCampaignName = derivedCampaignName.toUpperCase().replace(/-/g, '/')
+      for (let i = 0; i < xlsxFiles.length; i++) {
+        const currentFile = xlsxFiles[i]
+        setProcessingStatus(`Generando reporte ${i + 1} de ${xlsxFiles.length} (${currentFile.name})...`)
 
-      const finalResponsible = responsible === 'other' ? customResponsible : responsible
+        let derivedCampaignName = currentFile.name.replace(/\.[^/.]+$/, "")
+        
+        // Transformar nombre de campaña
+        derivedCampaignName = derivedCampaignName.toUpperCase().replace(/-/g, '/')
 
-      const formData = new FormData()
-      formData.append('csvFile', csvFile)
-      formData.append('xlsxFile', xlsxFile)
-      formData.append('campaignName', derivedCampaignName)
-      formData.append('responsible', finalResponsible)
-      formData.append('reflection', reflection)
+        const formData = new FormData()
+        formData.append('csvFile', csvFile)
+        formData.append('xlsxFile', currentFile)
+        formData.append('campaignName', derivedCampaignName)
+        formData.append('responsible', finalResponsible)
+        formData.append('reflection', reflection)
 
-      const response = await fetch('/api/generate-report', {
-        method: 'POST',
-        body: formData,
-      })
+        const response = await fetch('/api/generate-report', {
+          method: 'POST',
+          body: formData,
+        })
 
-      if (!response.ok) {
-        let errorMessage = 'Error al generar el reporte'
-        try {
-          const contentType = response.headers.get('content-type')
-          if (contentType && contentType.includes('application/json')) {
-            const errorData = await response.json()
-            errorMessage = errorData.error || errorMessage
-          } else {
-            const errorText = await response.text()
-            errorMessage = errorText || errorMessage
+        if (!response.ok) {
+          let errorMessage = `Error al generar el reporte de ${currentFile.name}`
+          try {
+            const contentType = response.headers.get('content-type')
+            if (contentType && contentType.includes('application/json')) {
+              const errorData = await response.json()
+              errorMessage = errorData.error || errorMessage
+            } else {
+              const errorText = await response.text()
+              errorMessage = errorText || errorMessage
+            }
+          } catch (e) {
+            // Si no podemos parsear el error, usar mensaje genérico
           }
-        } catch (e) {
-          // Si no podemos parsear el error, usar mensaje genérico
+          throw new Error(errorMessage)
         }
-        throw new Error(errorMessage)
+
+        const blob = await response.blob()
+        const url = URL.createObjectURL(blob)
+        newReports.push({
+          url,
+          filename: `Reporte ${derivedCampaignName}.xlsx`,
+          originalName: currentFile.name
+        })
       }
 
-      const blob = await response.blob()
-      const url = URL.createObjectURL(blob)
-      setDownloadUrl(url)
-
+      setGeneratedReports(newReports)
       toast({
         title: '¡Éxito!',
-        description: 'Reporte generado correctamente',
+        description: `Se generaron ${newReports.length} reporte(s) correctamente`,
       })
     } catch (error: any) {
       toast({
         title: 'Error',
-        description: error.message || 'Error al generar el reporte',
+        description: error.message || 'Error al generar los reportes',
         variant: 'destructive',
       })
+      // Aun si falla a medio camino, mostramos los que sí se generaron
+      if (newReports.length > 0) setGeneratedReports(newReports)
     } finally {
       setLoading(false)
+      setProcessingStatus('')
     }
   }
 
-  const downloadReport = () => {
-    if (downloadUrl && xlsxFile) {
-      const derivedCampaignName = xlsxFile.name.replace(/\.[^/.]+$/, "")
-      const a = document.createElement('a')
-      a.href = downloadUrl
-      a.download = `Reporte ${derivedCampaignName}.xlsx`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-    }
+  const downloadReport = (url: string, filename: string) => {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }
+
+  const downloadAll = () => {
+    generatedReports.forEach((report, index) => {
+      // Pequeño timeout para no saturar el navegador si son muchos
+      setTimeout(() => downloadReport(report.url, report.filename), index * 300)
+    })
   }
 
   const handleReset = () => {
     setCsvFile(null)
-    setXlsxFile(null)
+    setXlsxFiles([])
     setResponsible('')
+    setCustomResponsible('')
     setReflection('71984362')
-    setDownloadUrl(null)
+    setGeneratedReports([])
+    setProcessingStatus('')
     setResetKey(prevKey => prevKey + 1) // Fuerza re-render de campos file
   }
 
@@ -171,7 +192,7 @@ export default function SMSReportGenerator() {
                   key={`csv-${resetKey}`}
                   type="file"
                   accept=".csv"
-                  onChange={(e) => handleFileChange('csv', e.target.files?.[0] || null)}
+                  onChange={(e) => handleFileChange('csv', e.target.files)}
                   className="cursor-pointer"
                 />
                 {csvFile && (
@@ -185,28 +206,36 @@ export default function SMSReportGenerator() {
               </p>
             </div>
 
-            {/* Archivo XLSX */}
+            {/* Archivos SMS (XLSX/CSV) */}
             <div className="space-y-2">
               <Label className="text-base font-semibold flex items-center gap-2">
                 <FileSpreadsheet className="w-5 h-5" />
-                Archivo SMS (XLSX)
+                Archivos SMS (XLSX, CSV)
               </Label>
-              <div className="flex items-center gap-4">
-                <Input
-                  key={`xlsx-${resetKey}`}
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  onChange={(e) => handleFileChange('xlsx', e.target.files?.[0] || null)}
-                  className="cursor-pointer"
-                />
-                {xlsxFile && (
-                  <span className="text-sm text-green-600 font-medium flex items-center gap-1">
-                    ✓ {xlsxFile.name}
-                  </span>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-4">
+                  <Input
+                    key={`xlsx-${resetKey}`}
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    multiple
+                    onChange={(e) => handleFileChange('xlsx', e.target.files)}
+                    className="cursor-pointer"
+                  />
+                </div>
+                {xlsxFiles.length > 0 && (
+                  <div className="text-sm bg-green-50 text-green-700 p-3 rounded-md border border-green-200">
+                    <p className="font-semibold mb-1">✓ {xlsxFiles.length} archivo(s) seleccionado(s):</p>
+                    <ul className="list-disc list-inside max-h-24 overflow-y-auto">
+                      {xlsxFiles.map((file, i) => (
+                        <li key={i} className="truncate">{file.name}</li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
               <p className="text-sm text-gray-500">
-                Archivo Excel/CSV con la base de envíos (Teléfono, Mensaje)
+                Seleccione uno o más archivos con la base de envíos (Teléfono, Mensaje)
               </p>
             </div>
 
@@ -258,13 +287,13 @@ export default function SMSReportGenerator() {
             <div className="flex flex-col sm:flex-row gap-4 pt-4">
               <Button
                 onClick={generateReport}
-                disabled={loading || !!downloadUrl}
+                disabled={loading || generatedReports.length > 0}
                 className="bg-red-600 hover:bg-red-700 text-white font-semibold py-6 text-lg flex-1"
               >
                 {loading ? (
                   <>
                     <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                    Generando reporte...
+                    {processingStatus || 'Generando reporte...'}
                   </>
                 ) : (
                   <>
@@ -274,14 +303,14 @@ export default function SMSReportGenerator() {
                 )}
               </Button>
 
-              {downloadUrl && (
+              {generatedReports.length > 0 && (
                 <>
                   <Button
-                    onClick={downloadReport}
+                    onClick={downloadAll}
                     className="bg-green-600 hover:bg-green-700 text-white font-semibold py-6 text-lg flex-1"
                   >
                     <Download className="w-5 h-5 mr-2" />
-                    Descargar
+                    Descargar Todos ({generatedReports.length})
                   </Button>
                   <Button
                     onClick={handleReset}
@@ -292,6 +321,25 @@ export default function SMSReportGenerator() {
                 </>
               )}
             </div>
+            
+            {generatedReports.length > 0 && (
+              <div className="pt-4 border-t mt-4">
+                <Label className="font-semibold mb-3 block">Archivos Generados:</Label>
+                <div className="grid gap-2 grid-cols-1 md:grid-cols-2">
+                  {generatedReports.map((report, i) => (
+                    <div key={i} className="flex items-center justify-between p-3 bg-gray-50 border rounded-md">
+                      <div className="flex flex-col overflow-hidden">
+                         <span className="text-sm font-medium truncate" title={report.filename}>{report.filename}</span>
+                         <span className="text-xs text-gray-500 truncate">Origen: {report.originalName}</span>
+                      </div>
+                      <Button size="sm" variant="outline" onClick={() => downloadReport(report.url, report.filename)}>
+                        <Download className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
