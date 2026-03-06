@@ -8,11 +8,14 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
 
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+
 export default function SMSReportGenerator() {
   const { toast } = useToast()
   const [csvFile, setCsvFile] = useState<File | null>(null)
   const [xlsxFile, setXlsxFile] = useState<File | null>(null)
   const [responsible, setResponsible] = useState('')
+  const [customResponsible, setCustomResponsible] = useState('')
   const [reflection, setReflection] = useState('71984362')
   const [loading, setLoading] = useState(false)
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null)
@@ -38,10 +41,10 @@ export default function SMSReportGenerator() {
       return
     }
 
-    if (!responsible) {
+    if (!responsible || (responsible === 'other' && !customResponsible)) {
       toast({
         title: 'Error',
-        description: 'Por favor ingrese el nombre del encargado',
+        description: 'Por favor seleccione o ingrese el nombre del encargado',
         variant: 'destructive',
       })
       return
@@ -60,13 +63,18 @@ export default function SMSReportGenerator() {
     setDownloadUrl(null)
 
     try {
-      const derivedCampaignName = xlsxFile.name.replace(/\.[^/.]+$/, "")
+      let derivedCampaignName = xlsxFile.name.replace(/\.[^/.]+$/, "")
+      
+      // Transformar nombre de campaña
+      derivedCampaignName = derivedCampaignName.toUpperCase().replace(/-/g, '/')
+
+      const finalResponsible = responsible === 'other' ? customResponsible : responsible
 
       const formData = new FormData()
       formData.append('csvFile', csvFile)
       formData.append('xlsxFile', xlsxFile)
       formData.append('campaignName', derivedCampaignName)
-      formData.append('responsible', responsible)
+      formData.append('responsible', finalResponsible)
       formData.append('reflection', reflection)
 
       const response = await fetch('/api/generate-report', {
@@ -187,7 +195,7 @@ export default function SMSReportGenerator() {
                 <Input
                   key={`xlsx-${resetKey}`}
                   type="file"
-                  accept=".xlsx,.xls"
+                  accept=".xlsx,.xls,.csv"
                   onChange={(e) => handleFileChange('xlsx', e.target.files?.[0] || null)}
                   className="cursor-pointer"
                 />
@@ -198,7 +206,7 @@ export default function SMSReportGenerator() {
                 )}
               </div>
               <p className="text-sm text-gray-500">
-                Archivo Excel con la base de envíos (Teléfono, Mensaje)
+                Archivo Excel/CSV con la base de envíos (Teléfono, Mensaje)
               </p>
             </div>
 
@@ -208,12 +216,30 @@ export default function SMSReportGenerator() {
                   <User className="w-5 h-5" />
                   Encargado
                 </Label>
-                <Input
-                  type="text"
-                  value={responsible}
-                  onChange={(e) => setResponsible(e.target.value)}
-                  placeholder="Ej: Isaac Sánchez Rodríguez"
-                />
+                <div className="space-y-3">
+                  <Select value={responsible} onValueChange={setResponsible}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Seleccione un encargado" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Isaac Sánchez Rodríguez">Isaac Sánchez Rodríguez</SelectItem>
+                      <SelectItem value="Karen Herrera Quesada">Karen Herrera Quesada</SelectItem>
+                      <SelectItem value="Victor Castillo Salazar">Victor Castillo Salazar</SelectItem>
+                      <SelectItem value="Angela Oses Jimenez">Angela Oses Jimenez</SelectItem>
+                      <SelectItem value="other">Otro (Especificar)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  
+                  {responsible === 'other' && (
+                    <Input
+                      type="text"
+                      value={customResponsible}
+                      onChange={(e) => setCustomResponsible(e.target.value)}
+                      placeholder="Ingrese el nombre del encargado"
+                      className="mt-2"
+                    />
+                  )}
+                </div>
               </div>
 
               {/* Reflejo */}

@@ -60,25 +60,42 @@ export async function POST(req: NextRequest) {
       };
     });
 
-    // 2. Procesar XLSX (Base SMS Selección)
-    const baseWorkbook = new ExcelJS.Workbook();
-    await baseWorkbook.xlsx.load(xlsxBuffer as any);
-    const baseSheet = baseWorkbook.worksheets[0];
-
+    // 2. Procesar Base SMS (Soporte XLSX y CSV)
     const baseData: { Telefono1: string; Mensaje: string }[] = [];
-    baseSheet.eachRow((row, rowNumber) => {
-      if (rowNumber === 1) return; // Saltar encabezado
+    const isCsvBase = xlsxFile.name.toLowerCase().endsWith('.csv');
 
-      const telefono = row.getCell(1).value?.toString().trim() || "";
-      const mensaje = row.getCell(2).value?.toString().trim() || "";
-
-      if (telefono) {
-        baseData.push({
-          Telefono1: telefono,
-          Mensaje: mensaje,
-        });
+    if (isCsvBase) {
+      const baseCsvRecords = parse(xlsxBuffer, {
+        skip_empty_lines: true,
+        trim: true,
+        from_line: 2 // Saltar encabezado
+      });
+      for (const row of baseCsvRecords) {
+        const telefono = row[0]?.toString().trim() || "";
+        const mensaje = row[1]?.toString().trim() || "";
+        if (telefono) {
+          baseData.push({ Telefono1: telefono, Mensaje: mensaje });
+        }
       }
-    });
+    } else {
+      const baseWorkbook = new ExcelJS.Workbook();
+      await baseWorkbook.xlsx.load(xlsxBuffer as any);
+      const baseSheet = baseWorkbook.worksheets[0];
+
+      baseSheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return; // Saltar encabezado
+
+        const telefono = row.getCell(1).value?.toString().trim() || "";
+        const mensaje = row.getCell(2).value?.toString().trim() || "";
+
+        if (telefono) {
+          baseData.push({
+            Telefono1: telefono,
+            Mensaje: mensaje,
+          });
+        }
+      });
+    }
 
     // Mapeo para búsqueda rápida: Telefono con 506 -> Mensaje
     const telefonosBase = new Set(
@@ -142,7 +159,15 @@ export async function POST(req: NextRequest) {
     // 5. Crear el nuevo Libro de Excel (Reporte Final)
     const wb = new ExcelJS.Workbook();
     const now = new Date();
-    const idCampana = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}-${campaignName}`;
+    
+    let idCampana = "";
+    const dateMatch = campaignName.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+    if (dateMatch) {
+      const [_, day, month, year] = dateMatch;
+      idCampana = `${year}${month}-SMS`;
+    } else {
+      idCampana = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}-SMS`;
+    }
 
     // Estilos Comunes
     const headerFill: ExcelJS.Fill = {
@@ -179,6 +204,7 @@ export async function POST(req: NextRequest) {
 
     // ==================== HOJA BASE ====================
     const wsBase = wb.addWorksheet("BASE");
+    wsBase.views = [{ showGridLines: false }];
     wsBase.columns = [
       { header: "telefono", key: "telefono", width: 15 },
       { header: "SMS", key: "sms", width: 80 },
@@ -203,6 +229,7 @@ export async function POST(req: NextRequest) {
 
     // ==================== HOJA REPORTE ====================
     const wsReporte = wb.addWorksheet("REPORTE");
+    wsReporte.views = [{ showGridLines: false }];
     const headersReporte = [
       "Fecha",
       "Hora",
@@ -252,6 +279,7 @@ export async function POST(req: NextRequest) {
 
     // ==================== HOJA RESUMEN ====================
     const wsResumen = wb.addWorksheet("RESUMEN");
+    wsResumen.views = [{ showGridLines: false }];
     const headersResumen = [
       "Base",
       "Cantidad de la base",
@@ -301,9 +329,9 @@ export async function POST(req: NextRequest) {
       cell.border = border;
     });
 
-    // Fila 3 vacía con bordes
+    // Fila 3 vacía sin bordes
     const emptyRow = wsResumen.addRow(["", "", "", "", "", "", "", ""]);
-    emptyRow.eachCell((cell) => (cell.border = border));
+    emptyRow.eachCell((cell) => (cell.border = {}));
 
     // Sección final de totales
     const bgPink: ExcelJS.Fill = {
