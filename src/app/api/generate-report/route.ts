@@ -1,41 +1,51 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import { parse } from "csv-parse/sync";
+import JSZip from "jszip";
 
 // Dev: Alvaro Enrique Cascante Moraga
 // Fecha: 05-03-2026
 // Commit: Endpoint de API principal responsable de recibir formData, procesar en memoria arrays cruzados y retornar Buffer XLSX
 export async function POST(req: NextRequest) {
+  let formData: FormData;
+  
+  // 1. Manejo robusto del parseo de FormData para detectar bloqueos de red corporativa
   try {
-    const formData = await req.formData();
+    formData = await req.formData();
+  } catch (err) {
+    console.error("Error crítico al parsear FormData corporativo:", err);
+    return NextResponse.json(
+      { 
+        error: "La red corporativa o el tamaño de los archivos impidió completar la subida masiva. " +
+               "Este error suele ocurrir cuando el Firewall bloquea peticiones de gran tamaño. " +
+               "Intenta subir menos archivos simultáneamente o verifica tu conexión."
+      },
+      { status: 413 } // Payload Too Large o similar
+    );
+  }
+
+  try {
     const csvFile = formData.get("csvFile") as File;
-    const xlsxFile = formData.get("xlsxFile") as File;
-    const campaignName = formData.get("campaignName") as string;
+    const xlsxFiles = formData.getAll("xlsxFiles") as File[];
     const responsible = formData.get("responsible") as string;
     const reflection = formData.get("reflection") as string;
 
-    if (!csvFile || !xlsxFile) {
+    if (!csvFile || xlsxFiles.length === 0) {
       return NextResponse.json(
-        { error: "Se requieren ambos archivos" },
+        { error: "Se requieren el archivo CSV de reporte claro y al menos un archivo base (XLSX/CSV)" },
         { status: 400 },
       );
     }
 
-    if (!campaignName || !responsible || !reflection) {
+    if (!responsible || !reflection) {
       return NextResponse.json(
-        { error: "Faltan campos requeridos (campaña, encargado o reflejo)" },
+        { error: "Faltan campos requeridos (encargado o reflejo)" },
         { status: 400 },
       );
     }
 
-    // Leer búferes
+    // Procesar CSV una sola vez para todo el lote
     const csvBuffer = Buffer.from(await csvFile.arrayBuffer());
-    const xlsxBuffer = Buffer.from(await xlsxFile.arrayBuffer());
-
-    // Dev: Alvaro Enrique Cascante Moraga
-    // Fecha: 05-03-2026
-    // Commit: 1. Procesar CSV (Reporte Claro / Formato Genérico) normalizando columnas dinámicas
-    // 1. Procesar CSV (Reporte Claro / Formato Genérico)
     const csvRecordsRaw = parse(csvBuffer, {
       columns: true,
       skip_empty_lines: true,
@@ -43,383 +53,129 @@ export async function POST(req: NextRequest) {
       trim: true,
     });
 
-    // Normalizar registros para que sean compatibles con ambos formatos
+    console.log(`[Batch] Iniciando proceso para ${xlsxFiles.length} archivos usando un CSV de ${csvRecordsRaw.length} registros.`);
+
+    // Función interna de normalización (reutilizada)
+    function normalizeMessage(msg: any) {
+      if (!msg) return "";
+      return msg.toString()
+        .replace(/\r?\n|\r/g, " ")
+        .trim()
+        .replace(/[.,;:]+$/, "")
+        .replace(/\s+/g, " ");
+    }
+
     const csvRecords = csvRecordsRaw.map((record: any) => {
       let fecha = record.Fecha || "";
-      let hora = record[""] || record.Hora || ""; // El formato antiguo tiene una columna vacía o "Hora"
-
-      // Si no hay Hora pero la Fecha contiene un espacio (formato genérico "YYYY-MM-DD HH:mm")
+      let hora = record[""] || record.Hora || "";
       if ((!hora || hora === "") && fecha.includes(" ")) {
         const parts = fecha.split(" ");
         fecha = parts[0];
         hora = parts[1];
       }
-
       return {
+        ...record,
         Fecha: fecha,
         Hora: hora,
-        Destino: record.Destino,
-        Mensaje: record.Mensaje,
-        Usuario: record.Usuario,
-        "Total Enviados": record["Total Enviados"],
-        Estado: record.Estado,
+        Destino: record.Destino?.toString().trim() || "",
+        MensajeNormalizado: normalizeMessage(record.Mensaje),
+        MensajeOriginal: record.Mensaje || ""
       };
     });
 
-    // Dev: Alvaro Enrique Cascante Moraga
-    // Fecha: 05-03-2026
-    // Commit: 2. Extracción de Base SMS tolerante a fallos, permitiendo entrada unificada de XLSX o CSV extrayendo primer y segunda columna
-    // 2. Procesar Base SMS (Soporte XLSX y CSV)
-    const baseData: { Telefono1: string; Mensaje: string }[] = [];
-    const isCsvBase = xlsxFile.name.toLowerCase().endsWith('.csv');
+    const zip = new JSZip();
 
-    if (isCsvBase) {
-      const baseCsvRecords = parse(xlsxBuffer, {
-        skip_empty_lines: true,
-        trim: true,
-        from_line: 2 // Saltar encabezado
-      });
-      for (const row of baseCsvRecords) {
-        const telefono = row[0]?.toString().trim() || "";
-        const mensaje = row[1]?.toString().trim() || "";
-        if (telefono) {
-          baseData.push({ Telefono1: telefono, Mensaje: mensaje });
+    // 2. Bucle de procesamiento por cada archivo base
+    for (const xlsxFile of xlsxFiles) {
+      const xlsxBuffer = Buffer.from(await xlsxFile.arrayBuffer());
+      const campaignName = xlsxFile.name.replace(/\.[^/.]+$/, "").toUpperCase().replace(/-/g, "/");
+      
+      const baseData: { Telefono1: string; Mensaje: string }[] = [];
+      const isCsvBase = xlsxFile.name.toLowerCase().endsWith('.csv');
+
+      if (isCsvBase) {
+        const baseCsvRecords = parse(xlsxBuffer, { skip_empty_lines: true, trim: true, from_line: 2 });
+        for (const row of baseCsvRecords) {
+          if (row[0]) baseData.push({ Telefono1: row[0].toString().trim(), Mensaje: row[1]?.toString().trim() || "" });
         }
+      } else {
+        const baseWorkbook = new ExcelJS.Workbook();
+        await baseWorkbook.xlsx.load(xlsxBuffer as any);
+        const baseSheet = baseWorkbook.worksheets[0];
+        baseSheet.eachRow((row, rowNumber) => {
+          if (rowNumber === 1) return;
+          const cell1 = row.getCell(1).value;
+          const cell2 = row.getCell(2).value;
+          let tel = (cell1 as any)?.richText ? (cell1 as any).richText.map((t: any) => t.text).join("") : cell1?.toString() || "";
+          let msg = (cell2 as any)?.richText ? (cell2 as any).richText.map((t: any) => t.text).join("") : cell2?.toString() || "";
+          if (tel.trim()) baseData.push({ Telefono1: tel.trim(), Mensaje: msg.trim() });
+        });
       }
-    } else {
-      const baseWorkbook = new ExcelJS.Workbook();
-      await baseWorkbook.xlsx.load(xlsxBuffer as any);
-      const baseSheet = baseWorkbook.worksheets[0];
 
-      baseSheet.eachRow((row, rowNumber) => {
-        if (rowNumber === 1) return; // Saltar encabezado
+      const telefonosBaseSet = new Set(baseData.map(d => d.Telefono1.startsWith("506") ? d.Telefono1 : "506" + d.Telefono1));
+      const baseMap = new Map(baseData.map(d => {
+        const tel = d.Telefono1.startsWith("506") ? d.Telefono1 : "506" + d.Telefono1;
+        return [`${tel}|${normalizeMessage(d.Mensaje)}`, d];
+      }));
 
-        const telefono = row.getCell(1).value?.toString().trim() || "";
-        const mensaje = row.getCell(2).value?.toString().trim() || "";
-
-        if (telefono) {
-          baseData.push({
-            Telefono1: telefono,
-            Mensaje: mensaje,
-          });
-        }
+      let filteredRows = csvRecords.filter((row: any) => {
+        const key = `${row.Destino}|${row.MensajeNormalizado}`;
+        return baseMap.has(key);
       });
-    }
 
-    // Mapeo para búsqueda rápida: Telefono con 506 -> Mensaje
-    const telefonosBase = new Set(
-      baseData.map((d) =>
-        d.Telefono1.startsWith("506") ? d.Telefono1 : "506" + d.Telefono1,
-      ),
-    );
-    const mensajesBaseMap = new Map(
-      baseData.map((d) => {
-        const tel = d.Telefono1.startsWith("506")
-          ? d.Telefono1
-          : "506" + d.Telefono1;
-        return [tel, d.Mensaje];
-      }),
-    );
-
-    // Dev: Alvaro Enrique Cascante Moraga
-    // Fecha: 05-03-2026
-    // Commit: 3. Lógica de cruce de datos y filtrado de matriz comparando destinos y estandarizando strings de mensajes
-    // 3. Filtrar CSV según la BASE
-    let filteredRows = csvRecords.filter((row: any) => {
-      const destino = row.Destino?.toString().trim();
-      if (telefonosBase.has(destino)) {
-        const expectedMsg = mensajesBaseMap.get(destino);
-        // Normalizar mensajes para comparación (quitar espacios extra y saltos de línea)
-        const currentMsg = row.Mensaje?.toString()
-          .replace(/\r?\n|\r/g, " ")
-          .trim();
-        const normalizedExpected = expectedMsg
-          ?.toString()
-          .replace(/\r?\n|\r/g, " ")
-          .trim();
-
-        return normalizedExpected && currentMsg === normalizedExpected;
+      if (filteredRows.length === 0 && baseData.length > 0) {
+        filteredRows = csvRecords.filter((row: any) => telefonosBaseSet.has(row.Destino));
       }
-      return false;
-    });
 
-    // Fallback: si no hay coincidencias exactas con mensaje, filtrar solo por teléfono
-    if (filteredRows.length === 0) {
-      filteredRows = csvRecords.filter((row: any) => {
-        const destino = row.Destino?.toString().trim();
-        return telefonosBase.has(destino);
+      // 3. Generar Excel individual
+      const wb = new ExcelJS.Workbook();
+      const wsBase = wb.addWorksheet("BASE");
+      wsBase.addRow(["telefono", "SMS"]);
+      baseData.forEach(d => wsBase.addRow([d.Telefono1, d.Mensaje]));
+
+      const wsReporte = wb.addWorksheet("REPORTE");
+      const headers = ["Fecha", "Hora", "Destino", "Mensaje", "Usuario", "Total enviado", "Estado", "Reflejo", "Campaña", "Factura"];
+      wsReporte.addRow(headers);
+      filteredRows.forEach((row: any) => {
+        wsReporte.addRow([
+          row.Fecha, row.Hora, row.Destino, row.MensajeOriginal, row.Usuario, 
+          row["Total Enviados"], row.Estado === "ENVIADO" ? "Entregado" : "No entregado",
+          reflection, campaignName, 0.03
+        ]);
       });
+
+      const wsResumen = wb.addWorksheet("RESUMEN");
+      wsResumen.addRow(["Base", "Cantidad", "Enviados", "Encargado"]);
+      wsResumen.addRow([campaignName, baseData.length, filteredRows.length, responsible]);
+
+      const excelBuffer = await wb.xlsx.writeBuffer();
+      
+      // Si solo es un archivo, retornarlo directamente sin ZIP si se prefiere
+      if (xlsxFiles.length === 1) {
+        console.log(`[SISTEMA] Enviando archivo único: ${xlsxFile.name}`);
+        return new NextResponse(excelBuffer as any, {
+          headers: {
+            "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "Content-Disposition": `attachment; filename="Reporte ${xlsxFile.name.replace(/\.[^/.]+$/, "")}.xlsx"`,
+          },
+        });
+      }
+
+      zip.file(`Reporte ${xlsxFile.name.replace(/\.[^/.]+$/, "")}.xlsx`, excelBuffer);
     }
 
-    // Dev: Alvaro Enrique Cascante Moraga
-    // Fecha: 05-03-2026
-    // Commit: 4. Extracción de métricas de éxito (Totales de envío, base y entregas restando excluidos)
-    // 4. Calcular Estadísticas
-    const totalBase = baseData.length;
-    const totalEnviados = filteredRows.reduce(
-      (acc: number, row: any) => acc + (Number(row["Total Enviados"]) || 0),
-      0,
-    );
-    const totalNoEnviados = filteredRows.filter(
-      (row: any) => row.Estado === "ERROR" || row.Estado === "FALLIDO",
-    ).length;
-    const totalExcluidos = 0; // "Total de mensajes No Enviados (duplicados/excluidos)"
-    const totalEntregados = totalEnviados - totalNoEnviados - totalExcluidos;
-    
-    const mensajeEjemplo = baseData[0]?.Mensaje || "";
-    const cantidadProsa = mensajeEjemplo.length;
-    const fechaEnvio = filteredRows[0]?.Fecha || "";
-    const horaEnvio = filteredRows[0]?.Hora || "";
-
-    // Dev: Alvaro Enrique Cascante Moraga
-    // Fecha: 05-03-2026
-    // Commit: 5. Creación algorítmica multidimensional del libro de Excel, deshabilitando grids y formateando estilos
-    // 5. Crear el nuevo Libro de Excel (Reporte Final)
-    const wb = new ExcelJS.Workbook();
-    const now = new Date();
-    
-    let idCampana = "";
-    const dateMatch = campaignName.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-    if (dateMatch) {
-      const [_, day, month, year] = dateMatch;
-      idCampana = `${year}${month}-SMS`;
-    } else {
-      idCampana = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}-SMS`;
-    }
-
-    // Estilos Comunes
-    const headerFill: ExcelJS.Fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FFB4A7D6" }, // Lila
-    };
-    const headerFont: Partial<ExcelJS.Font> = {
-      name: "Calibri",
-      size: 11,
-      bold: true,
-      color: { argb: "FF000000" }, // Negro
-    };
-    const headerAlignment: Partial<ExcelJS.Alignment> = {
-      horizontal: "center",
-      vertical: "middle",
-      wrapText: true,
-    };
-    const border: Partial<ExcelJS.Borders> = {
-      top: { style: "thin" },
-      left: { style: "thin" },
-      bottom: { style: "thin" },
-      right: { style: "thin" },
-    };
-    const cellFont: Partial<ExcelJS.Font> = {
-      name: "Calibri",
-      size: 11,
-    };
-    const cellAlignment: Partial<ExcelJS.Alignment> = {
-      horizontal: "center",
-      vertical: "middle",
-      wrapText: true,
-    };
-
-    // ==================== HOJA BASE ====================
-    const wsBase = wb.addWorksheet("BASE");
-    wsBase.views = [{ showGridLines: false }];
-    wsBase.columns = [
-      { header: "telefono", key: "telefono", width: 15 },
-      { header: "SMS", key: "sms", width: 80 },
-    ];
-
-    // Aplicar estilos a encabezados BASE
-    wsBase.getRow(1).eachCell((cell) => {
-      cell.fill = headerFill;
-      cell.font = headerFont;
-      cell.alignment = headerAlignment;
-      cell.border = border;
-    });
-
-    baseData.forEach((d) => {
-      const row = wsBase.addRow({ telefono: d.Telefono1, sms: d.Mensaje });
-      row.eachCell((cell) => {
-        cell.font = cellFont;
-        cell.alignment = cellAlignment;
-        cell.border = border;
-      });
-    });
-
-    // ==================== HOJA REPORTE ====================
-    const wsReporte = wb.addWorksheet("REPORTE");
-    wsReporte.views = [{ showGridLines: false }];
-    const headersReporte = [
-      "Fecha",
-      "Hora",
-      "Destino",
-      "Mensaje",
-      "Usuario",
-      "Total enviado",
-      "Estado",
-      "Reflejo",
-      "Campaña",
-      "IdCampaña",
-      "Factura",
-    ];
-    wsReporte.columns = headersReporte.map((h, i) => ({
-      header: h,
-      key: h,
-      width: [12, 12, 15, 80, 30, 12, 12, 12, 20, 15, 10][i],
-    }));
-
-    wsReporte.getRow(1).eachCell((cell) => {
-      cell.fill = headerFill;
-      cell.font = headerFont;
-      cell.alignment = headerAlignment;
-      cell.border = border;
-    });
-
-    filteredRows.forEach((row: any) => {
-      const addedRow = wsReporte.addRow({
-        Fecha: row.Fecha,
-        Hora: row.Hora,
-        Destino: row.Destino,
-        Mensaje: row.Mensaje,
-        Usuario: row.Usuario,
-        "Total enviado": row["Total Enviados"],
-        Estado: row.Estado === "ENVIADO" || row.Estado === "ENTREGADO" ? "Entregado" : "No entregado",
-        Reflejo: reflection,
-        Campaña: campaignName,
-        IdCampaña: idCampana,
-        Factura: 0.03,
-      });
-      addedRow.eachCell((cell) => {
-        cell.font = cellFont;
-        cell.alignment = cellAlignment;
-        cell.border = border;
-      });
-    });
-
-    // ==================== HOJA RESUMEN ====================
-    const wsResumen = wb.addWorksheet("RESUMEN");
-    wsResumen.views = [{ showGridLines: false }];
-    const headersResumen = [
-      "Base",
-      "Cantidad de la base",
-      "Cantidad de la prosa ( caracteres)",
-      "Cantidad Enviados",
-      "Hora",
-      "Fecha",
-      "Reflejo",
-      "Encargado",
-    ];
-    wsResumen.getRow(1).values = headersResumen;
-    wsResumen.columns = [
-      { width: 50 },
-      { width: 20 },
-      { width: 25 },
-      { width: 18 },
-      { width: 12 },
-      { width: 12 },
-      { width: 12 },
-      { width: 25 },
-    ];
-
-    wsResumen.getRow(1).eachCell((cell) => {
-      cell.fill = headerFill;
-      cell.font = headerFont;
-      cell.alignment = headerAlignment;
-      cell.border = border;
-    });
-
-    // Datos Fila 2
-    const resumenRow2 = wsResumen.addRow([
-      campaignName,
-      totalBase,
-      cantidadProsa,
-      totalEnviados,
-      horaEnvio,
-      fechaEnvio,
-      reflection,
-      responsible,
-    ]);
-    resumenRow2.eachCell((cell, colNum) => {
-      cell.font = cellFont;
-      cell.alignment =
-        colNum === 1 || colNum === 8
-          ? cellAlignment
-          : { horizontal: "center", vertical: "middle" };
-      cell.border = border;
-    });
-
-    // Fila 3 vacía sin bordes
-    const emptyRow = wsResumen.addRow(["", "", "", "", "", "", "", ""]);
-    emptyRow.eachCell((cell) => (cell.border = {}));
-
-    // Sección final de totales
-    const bgPink: ExcelJS.Fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FFFEF2F2" },
-    };
-    const boldFont: Partial<ExcelJS.Font> = { ...cellFont, bold: true };
-
-    // Fila 4: No recibidos
-    const row4 = wsResumen.addRow([
-      "Total enviados ( no recibidos)",
-      totalNoEnviados,
-    ]);
-    [1, 2].forEach((col) => {
-      const cell = row4.getCell(col);
-      cell.fill = bgPink;
-      cell.font = boldFont;
-      cell.border = border;
-      cell.alignment =
-        col === 1
-          ? cellAlignment
-          : { horizontal: "center", vertical: "middle" };
-    });
-
-    // Fila 5: Entregados
-    const row5 = wsResumen.addRow(["Total Entregados", totalEntregados]);
-    [1, 2].forEach((col) => {
-      const cell = row5.getCell(col);
-      cell.fill = bgPink;
-      cell.font = boldFont;
-      cell.border = border;
-      cell.alignment =
-        col === 1
-          ? cellAlignment
-          : { horizontal: "center", vertical: "middle" };
-    });
-
-    // Fila 6: Duplicados/Excluidos
-    const row6 = wsResumen.addRow([
-      "Total de mensajes No Enviados (duplicados/excluidos)",
-      0,
-    ]);
-    [1, 2].forEach((col) => {
-      const cell = row6.getCell(col);
-      cell.fill = bgPink;
-      cell.font = boldFont;
-      cell.border = border;
-      cell.alignment =
-        col === 1
-          ? cellAlignment
-          : { horizontal: "center", vertical: "middle" };
-    });
-
-    // 6. Generar el buffer final
-    const finalBuffer = await wb.xlsx.writeBuffer();
-
-    return new NextResponse(finalBuffer as ArrayBuffer, {
-      status: 200,
+    // 4. Retornar el ZIP comprimido para múltiples archivos
+    const zipBuffer = await zip.generateAsync({ type: "nodebuffer" });
+    console.log("[SISTEMA] Lote masivo completado. Enviando ZIP.");
+    return new NextResponse(zipBuffer as any, {
       headers: {
-        "Content-Type":
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="Reporte_${campaignName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7E]/g, "")}.xlsx"; filename*=UTF-8''${encodeURIComponent("Reporte " + campaignName + ".xlsx")}`,
+        "Content-Type": "application/zip",
+        "Content-Disposition": 'attachment; filename="Reportes_Generados.zip"',
       },
     });
+
   } catch (error: any) {
-    console.error("Error al generar el reporte:", error);
-    return NextResponse.json(
-      { error: error.message || "Error al generar el reporte" },
-      { status: 500 },
-    );
+    console.error("Error fatal en procesamiento batch:", error);
+    return NextResponse.json({ error: "Error interno: " + error.message }, { status: 500 });
   }
 }

@@ -1,0 +1,28 @@
+{
+  "fromCSV": {
+    "Fecha": "2026-03-05 17:23",
+    "Destino": "50660632108",
+    "Mensaje": "Estimado cliente, se bloquearon sus accesos a los canales electronicos, favor llamar al Call Center 22022020, opcion 2 o vaya a una oficina del Banco Popular",
+    "Usuario": "jbojorges@netcom.com.pa",
+    "Cuenta": "NETCOM BUSINESS CONTACT CENTER SOCIEDAD ANONIMA",
+    "Total Enviados": "1",
+    "No Entregados": "0",
+    "Total Entregados": "1",
+    "Estado": "ENVIADO",
+    "Estado de Entrega": "DELIVERED",
+    "Fecha Estado Entrega": "2026-03-05 17:23",
+    "Codigo de error": "",
+    "Marcacion": "50671984362",
+    "ID Plantilla": "",
+    "Vistas Previas": "0",
+    "Clicks Totales": "0",
+    "Clicks Unicos": "0"
+  },
+  "fromXLSX": {
+    "Telefono1": "60632108",
+    "Mensaje": "Estimado cliente, se bloquearon sus accesos a los canales electronicos, favor llamar al Call Center 22022020, opcion 2 o vaya a una oficina del Banco Popular."
+  },
+  "normalizedCSV": "Estimado cliente, se bloquearon sus accesos a los canales electronicos, favor llamar al Call Center 22022020, opcion 2 o vaya a una oficina del Banco Popular",
+  "normalizedXLSX": "Estimado cliente, se bloquearon sus accesos a los canales electronicos, favor llamar al Call Center 22022020, opcion 2 o vaya a una oficina del Banco Popular",
+  "matches": true
+}

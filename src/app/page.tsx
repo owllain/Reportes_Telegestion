@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import JSZip from 'jszip'
 
 // Dev: Alvaro Enrique Cascante Moraga
 // Fecha: 05-03-2026
@@ -71,71 +72,97 @@ export default function SMSReportGenerator() {
 
     setLoading(true)
     setGeneratedReports([])
-    const newReports: typeof generatedReports = []
     
     const finalResponsible = responsible === 'other' ? customResponsible : responsible
 
     try {
-      for (let i = 0; i < xlsxFiles.length; i++) {
-        const currentFile = xlsxFiles[i]
-        setProcessingStatus(`Generando reporte ${i + 1} de ${xlsxFiles.length} (${currentFile.name})...`)
+      setProcessingStatus(`Subiendo ${xlsxFiles.length} archivos y procesando lote masivo...`)
 
-        let derivedCampaignName = currentFile.name.replace(/\.[^/.]+$/, "")
+      const formData = new FormData()
+      formData.append('csvFile', csvFile)
+      xlsxFiles.forEach(file => {
+        formData.append('xlsxFiles', file)
+      })
+      formData.append('responsible', finalResponsible)
+      formData.append('reflection', reflection)
+
+      const response = await fetch('/api/generate-report', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        let errorMessage = 'Error al procesar el lote de reportes'
+        try {
+          const contentType = response.headers.get('content-type')
+          if (contentType && contentType.includes('application/json')) {
+            const errorData = await response.json()
+            errorMessage = errorData.error || errorMessage
+          } else {
+            const errorText = await response.text()
+            errorMessage = errorText || errorMessage
+          }
+        } catch (e) {}
+
+        if (response.status === 413 || errorMessage.includes('red corporativa')) {
+          throw new Error('PROBLEMA DE RED: La red corporativa bloqueó la subida masiva por el tamaño. Intenta con menos archivos.')
+        }
+        throw new Error(errorMessage)
+      }
+
+      const contentType = response.headers.get('content-type')
+      const blob = await response.blob()
+      const newReports: { url: string; filename: string; originalName: string }[] = []
+
+      if (contentType && contentType.includes('application/zip')) {
+        // Caso: Varios archivos (ZIP) - Descomprimir en cliente para dar opción "1 a 1"
+        const zip = await JSZip.loadAsync(blob)
         
-        // Transformar nombre de campaña
-        derivedCampaignName = derivedCampaignName.toUpperCase().replace(/-/g, '/')
-
-        const formData = new FormData()
-        formData.append('csvFile', csvFile)
-        formData.append('xlsxFile', currentFile)
-        formData.append('campaignName', derivedCampaignName)
-        formData.append('responsible', finalResponsible)
-        formData.append('reflection', reflection)
-
-        const response = await fetch('/api/generate-report', {
-          method: 'POST',
-          body: formData,
+        // Opción para descargar el ZIP completo
+        newReports.push({
+          url: URL.createObjectURL(blob),
+          filename: `Reportes_Lote_${new Date().getTime()}.zip`,
+          originalName: '📦 DESCARGAR TODO EL LOTE (ZIP)'
         })
 
-        if (!response.ok) {
-          let errorMessage = `Error al generar el reporte de ${currentFile.name}`
-          try {
-            const contentType = response.headers.get('content-type')
-            if (contentType && contentType.includes('application/json')) {
-              const errorData = await response.json()
-              errorMessage = errorData.error || errorMessage
-            } else {
-              const errorText = await response.text()
-              errorMessage = errorText || errorMessage
-            }
-          } catch (e) {
-            // Si no podemos parsear el error, usar mensaje genérico
+        // Extraer archivos individuales
+        const fileEntries = Object.entries(zip.files)
+        for (const [name, file] of fileEntries) {
+          if (!file.dir) {
+            const fileBlob = await file.async('blob')
+            newReports.push({
+              url: URL.createObjectURL(fileBlob),
+              filename: name,
+              originalName: name
+            })
           }
-          throw new Error(errorMessage)
         }
-
-        const blob = await response.blob()
+      } else {
+        // Caso: Archivo único (XLSX)
         const url = URL.createObjectURL(blob)
+        const fileName = xlsxFiles[0].name.replace(/\.[^/.]+$/, "")
         newReports.push({
           url,
-          filename: `Reporte ${derivedCampaignName}.xlsx`,
-          originalName: currentFile.name
+          filename: `Reporte ${fileName}.xlsx`,
+          originalName: xlsxFiles[0].name
         })
       }
 
       setGeneratedReports(newReports)
+      
       toast({
-        title: '¡Éxito!',
-        description: `Se generaron ${newReports.length} reporte(s) correctamente`,
+        title: '¡Procesamiento exitoso!',
+        description: xlsxFiles.length === 1 
+          ? 'Se generó el reporte correctamente.' 
+          : `Se generaron ${xlsxFiles.length} reportes. Puedes descargarlos individualmente o el lote completo.`,
       })
     } catch (error: any) {
+      console.error("Error en generación batch:", error)
       toast({
-        title: 'Error',
+        title: 'Error de Procesamiento',
         description: error.message || 'Error al generar los reportes',
         variant: 'destructive',
       })
-      // Aun si falla a medio camino, mostramos los que sí se generaron
-      if (newReports.length > 0) setGeneratedReports(newReports)
     } finally {
       setLoading(false)
       setProcessingStatus('')
@@ -272,7 +299,10 @@ export default function SMSReportGenerator() {
                       <SelectItem value="Isaac Sánchez Rodríguez">Isaac Sánchez Rodríguez</SelectItem>
                       <SelectItem value="Karen Herrera Quesada">Karen Herrera Quesada</SelectItem>
                       <SelectItem value="Victor Castillo Salazar">Victor Castillo Salazar</SelectItem>
-                      <SelectItem value="Angela Oses Jimenez">Angela Oses Jimenez</SelectItem>
+                      <SelectItem value="Stephanny Davila Sevilla">Stephanny Davila Sevilla</SelectItem>
+                      <SelectItem value="Monitoreo Transaccional BP">Monitoreo Transaccional BP</SelectItem>
+                      <SelectItem value="Bryan Elizondo Mainieri">Bryan Elizondo Mainieri</SelectItem>
+                      <SelectItem value="Johnny Rodriguez Solis">Johnny Rodriguez Solis</SelectItem>
                       <SelectItem value="other">Otro (Especificar)</SelectItem>
                     </SelectContent>
                   </Select>
@@ -390,6 +420,21 @@ export default function SMSReportGenerator() {
                 <br/>• <strong>RESUMEN:</strong> Estadísticas y totales
               </p>
             </div>
+            <div className="pt-4 mt-2 border-t">
+              <p className="font-semibold text-sm mb-2 flex items-center gap-2">
+                <Download className="w-4 h-4 text-red-600" />
+                Plantillas de Ejemplo:
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <a href="/templates/plantilla-reporte-claro.csv" download className="text-xs bg-gray-100 hover:bg-gray-200 border px-3 py-2 rounded-md flex items-center gap-2 transition-colors">
+                  <FileText className="w-3 h-3" /> Descargar Plantilla Claro (CSV)
+                </a>
+                <a href="/templates/plantilla-sms-seleccion.xlsx" download className="text-xs bg-gray-100 hover:bg-gray-200 border px-3 py-2 rounded-md flex items-center gap-2 transition-colors">
+                  <FileSpreadsheet className="w-3 h-3" /> Descargar Plantilla SMS (XLSX)
+                </a>
+              </div>
+            </div>
+
           </CardContent>
         </Card>
       </main>

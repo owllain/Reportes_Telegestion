@@ -1,0 +1,42 @@
+[
+  {
+    "row": 1,
+    "values": [
+      null,
+      "telefono",
+      "SMS"
+    ]
+  },
+  {
+    "row": 2,
+    "values": [
+      null,
+      84829544,
+      "Estimado cliente, se bloquearon sus accesos a los canales electronicos, favor llamar al Call Center 22022020, opcion 2 o vaya a una oficina del Banco Popular."
+    ]
+  },
+  {
+    "row": 3,
+    "values": [
+      null,
+      88511209,
+      "Estimado cliente, se bloquearon sus accesos a los canales electronicos, favor llamar al Call Center 22022020, opcion 2 o vaya a una oficina del Banco Popular."
+    ]
+  },
+  {
+    "row": 4,
+    "values": [
+      null,
+      62961051,
+      "Estimado cliente, se bloquearon sus accesos a los canales electronicos, favor llamar al Call Center 22022020, opcion 2 o vaya a una oficina del Banco Popular."
+    ]
+  },
+  {
+    "row": 5,
+    "values": [
+      null,
+      72934565,
+      "Estimado cliente, se bloquearon sus accesos a los canales electronicos, favor llamar al Call Center 22022020, opcion 2 o vaya a una oficina del Banco Popular."
+    ]
+  }
+]
