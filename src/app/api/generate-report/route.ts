@@ -294,11 +294,15 @@ export async function POST(req: NextRequest) {
       const fechaEnvio = filteredRows[0]?.Fecha || "";
       const horaEnvio = filteredRows[0]?.Hora || "";
 
+      const totalIntentos = filteredRows.reduce((acc: number, r: any) => acc + (Number(r["Total Enviados"]) || 0), 0);
+      const totalEntregados = filteredRows.filter((r: any) => r.Estado === "ENVIADO" || r.Estado === "ENTREGADO").length;
+      const totalNoEnviados = baseData.length - totalEntregados;
+
       const resumenRow2 = wsResumen.addRow([
         reportSheetName,
         baseData.length,
         messageSample.length,
-        filteredRows.length,
+        totalIntentos,
         horaEnvio,
         fechaEnvio,
         reflection,
@@ -321,9 +325,6 @@ export async function POST(req: NextRequest) {
         fgColor: { argb: "FFFEF2F2" },
       };
       const boldFont: Partial<ExcelJS.Font> = { ...cellFont, bold: true };
-
-      const totalNoEnviados = baseData.length - filteredRows.length;
-      const totalEntregados = filteredRows.filter((r: any) => r.Estado === "ENVIADO" || r.Estado === "ENTREGADO").length;
 
       // Fila 4: No recibidos
       const row4 = wsResumen.addRow(["Total enviados ( no recibidos)", totalNoEnviados]);
