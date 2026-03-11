@@ -4,12 +4,11 @@ Aplicación web para automatizar la generación de reportes de envíos de SMS. *
 
 ## ✨ Características
 
-- ✅ **Sin base de datos**: Procesamiento 100% stateless
-- ✅ **Vercel Ready**: Deployment sencillo en Vercel
-- ✅ **Soporta archivos de cualquier tamaño**: Probado con 50,000+ registros
-- ✅ **Docker Compatible**: Incluye Dockerfile para deployment robusto
-- ✅ **Interfaz moderna**: Diseño con shadcn/ui y Tailwind CSS
-- ✅ **Procesamiento en servidor**: Usa Python/pandas para manejo eficiente de datos
+- ✅ **Sin base de datos**: Procesamiento 100% stateless en memoria.
+- ✅ **Vercel Ready**: Optimizado para despliegue serverless.
+- ✅ **Procesamiento de Archivos Pesados**: Capacidad para manejar miles de registros mediante streams y buffers.
+- ✅ **Generación Batch**: Procesa múltiples archivos simultáneamente y los entrega en un ZIP.
+- ✅ **Interfaz Premium**: Diseño moderno con Shadcn/UI, Tailwind CSS y animaciones fluidas.
 
 ## 🚀 Quick Start
 
@@ -28,10 +27,12 @@ La aplicación estará disponible en `http://localhost:3000`
 
 ## 📦 Tecnologías
 
-- **Frontend**: Next.js 16, React 19, TypeScript 5
-- **Estilos**: Tailwind CSS 4, shadcn/ui
-- **Backend**: Python 3 con pandas y openpyxl
-- **Deployment**: Vercel, Docker, Node.js
+- **Framework**: Next.js 16 (App Router)
+- **Lenguaje**: TypeScript 5
+- **UI & Estilos**: Tailwind CSS 4, Shadcn/UI, Framer Motion
+- **Gestión de Estado**: Zustand (Estado global), React Query (Server State)
+- **Manipulación de Archivos**: ExcelJS, JSZip, csv-parse
+- **Deployment**: Vercel / Docker
 
 ## 🎯 Uso
 
@@ -97,8 +98,21 @@ npm start
 npm run lint
 ```
 
-## 📚 Documentación
+## 🏗️ Arquitectura y Patrones
 
+### Arquitectura Técnica
+El proyecto sigue una arquitectura **Serverless-First** utilizando el **App Router de Next.js**. Todo el procesamiento de datos se centraliza en el servidor para garantizar la seguridad de la información y minimizar la carga en el cliente.
+
+- **Frontend (Client Side)**: SPA reactiva que maneja el estado de la subida y pre-visualización mediante **Zustand**.
+- **API (Server Side)**: Los **Route Handlers** actúan como microservicios que procesan binarios (XLSX/CSV) en memoria, realizan el cruce de datos y generan nuevos archivos sin persistencia en disco.
+
+### Patrones de Diseño
+- **Component-Based Architecture**: Construcción de interfaces mediante componentes atómicos y reutilizables.
+- **Stateless Processing**: La API no guarda estado entre peticiones, permitiendo escalabilidad horizontal inmediata.
+- **Repository/Service Pattern (Implicit)**: Lógica de procesamiento de reportes desacoplada de la interfaz de usuario.
+- **Strategy Pattern**: Adaptadores para procesar diferentes formatos de entrada (CSV o XLSX) de manera intercambiable.
+
+## 📚 Documentación
 - [Compatibilidad con otros archivos](./COMPATIBILIDAD_ARCHIVOS.md)
 - [Deployment en Vercel](./VERCEL_DEPLOYMENT.md)
 - [Instrucciones del generador de reportes](./README_SMS_REPORT.md)
@@ -125,13 +139,8 @@ npm run lint
 
 ## 📝 Notas Importantes
 
-### Requisito de Python
-
-La aplicación requiere **Python 3** con las siguientes librerías:
-- `pandas`
-- `openpyxl`
-
-En Vercel, asegúrate de usar Docker o un runtime con Python disponible.
+### Procesamiento Node.js
+La aplicación utiliza un motor de procesamiento basado en **Node.js** con la librería `ExcelJS`. No requiere un entorno de Python externo, lo que facilita el despliegue directo en plataformas como Vercel o contenedores estándar de Node.
 
 ### Sin Base de Datos
 

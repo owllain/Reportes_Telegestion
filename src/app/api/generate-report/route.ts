@@ -321,11 +321,13 @@ export async function POST(req: NextRequest) {
       const horaEnvio = filteredRows[0]?.Hora || "";
 
       const totalIntentos = filteredRows.reduce((acc: number, r: any) => acc + (Number(r["Total Enviados"]) || 0), 0);
-      const totalEntregados = filteredRows.filter((r: any) => r.Estado === "ENVIADO" || r.Estado === "ENTREGADO").length;
       const totalNoRecibidosRegistrados = filteredRows.filter((r: any) => r.Estado === "ERROR" || r.Estado === "FALLIDO" || r.Estado === "RECHAZADO").length;
       
       // El total de "no recibidos" según el usuario debe ser lo que diga "No entregado" + los que ni siquiera llegaron a registrarse (base - procesados)
       const totalNoEnviados = (baseData.length - filteredRows.length) + totalNoRecibidosRegistrados;
+
+      // El usuario solicita que Total Entregados sea: Cantidad Enviados - Total enviados (no recibidos)
+      const totalEntregados = totalIntentos - totalNoEnviados;
 
       const resumenRow2 = wsResumen.addRow([
         reportSheetName,
