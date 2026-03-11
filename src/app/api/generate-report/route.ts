@@ -72,6 +72,25 @@ export async function POST(req: NextRequest) {
         .replace(/\s+/g, " ");
     }
 
+    // Nueva función para formatear fecha a DD/MM/YYYY
+    function formatToDDMMYYYY(dateStr: string) {
+      if (!dateStr) return "";
+      
+      // Intentar detectar formatos comunes
+      // Caso 1: YYYY-MM-DD o DD-MM-YYYY o DD/MM/YYYY
+      const parts = dateStr.split(/[-/]/);
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          // YYYY-MM-DD -> DD/MM/YYYY
+          return `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
+        } else if (parts[2].length === 4) {
+          // DD-MM-YYYY -> DD/MM/YYYY
+          return `${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[2]}`;
+        }
+      }
+      return dateStr;
+    }
+
     const csvRecords = csvRecordsRaw.map((record: any) => {
       let fecha = record.Fecha || "";
       let hora = record[""] || record.Hora || "";
@@ -82,7 +101,7 @@ export async function POST(req: NextRequest) {
       }
       return {
         ...record,
-        Fecha: fecha,
+        Fecha: formatToDDMMYYYY(fecha),
         Hora: hora,
         Destino: record.Destino?.toString().trim() || "",
         MensajeNormalizado: normalizeMessage(record.Mensaje),
@@ -98,7 +117,9 @@ export async function POST(req: NextRequest) {
       const campaignName = xlsxFile.name
         .replace(/\.[^/.]+$/, "")
         .toUpperCase()
-        .replace(/-/g, "/");
+        .replace(/_/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
 
       const baseData: { Telefono1: string; Mensaje: string }[] = [];
       const isCsvBase = xlsxFile.name.toLowerCase().endsWith(".csv");
@@ -206,7 +227,12 @@ export async function POST(req: NextRequest) {
         idCampana = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}-SMS`;
       }
 
-      const reportSheetName = xlsxFile.name.replace(/\.[^/.]+$/, "").toUpperCase().replace(/-/g, "/");
+      const reportSheetName = xlsxFile.name
+        .replace(/\.[^/.]+$/, "")
+        .toUpperCase()
+        .replace(/_/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
 
       // ==================== HOJA 1: BASE ====================
       const wsBase = wb.addWorksheet("BASE");
@@ -296,7 +322,10 @@ export async function POST(req: NextRequest) {
 
       const totalIntentos = filteredRows.reduce((acc: number, r: any) => acc + (Number(r["Total Enviados"]) || 0), 0);
       const totalEntregados = filteredRows.filter((r: any) => r.Estado === "ENVIADO" || r.Estado === "ENTREGADO").length;
-      const totalNoEnviados = baseData.length - totalEntregados;
+      const totalNoRecibidosRegistrados = filteredRows.filter((r: any) => r.Estado === "ERROR" || r.Estado === "FALLIDO" || r.Estado === "RECHAZADO").length;
+      
+      // El total de "no recibidos" según el usuario debe ser lo que diga "No entregado" + los que ni siquiera llegaron a registrarse (base - procesados)
+      const totalNoEnviados = (baseData.length - filteredRows.length) + totalNoRecibidosRegistrados;
 
       const resumenRow2 = wsResumen.addRow([
         reportSheetName,
@@ -361,8 +390,15 @@ export async function POST(req: NextRequest) {
       // Si solo es un archivo, retornarlo directamente (Exactamente como 1cec5fa)
       if (xlsxFiles.length === 1) {
         console.log(`[SISTEMA] Enviando archivo único: ${xlsxFile.name}`);
-        const safeFilename = `Reporte_${campaignName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7E]/g, "")}.xlsx`;
-        const encodedFilename = encodeURIComponent("Reporte " + campaignName + ".xlsx");
+        let finalCampaignName = campaignName.toUpperCase();
+        
+        // Evitar duplicar el prefijo REPORTE
+        if (finalCampaignName.startsWith("REPORTE")) {
+          finalCampaignName = finalCampaignName.replace(/^REPORTE\s*/, "").trim();
+        }
+        
+        const safeFilename = `REPORTE ${finalCampaignName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7E]/g, "")}.xlsx`;
+        const encodedFilename = encodeURIComponent("REPORTE " + finalCampaignName + ".xlsx");
         
         return new NextResponse(excelBuffer as any, {
           headers: {
@@ -372,17 +408,27 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      const zipFilename = `Reporte ${campaignName}.xlsx`;
+      let zipInternalName = campaignName.toUpperCase();
+      if (zipInternalName.startsWith("REPORTE")) {
+        zipInternalName = zipInternalName.replace(/^REPORTE\s*/, "").trim();
+      }
+      const zipFilename = `REPORTE ${zipInternalName}.xlsx`;
       zip.file(zipFilename, excelBuffer);
     }
 
     // 4. Retornar el ZIP comprimido para múltiples archivos
     const zipBuffer = await zip.generateAsync({ type: "nodebuffer" });
     console.log("[SISTEMA] Lote masivo completado. Enviando ZIP.");
+    
+    // Generar un nombre descriptivo para el ZIP basado en los archivos procesados o la fecha actual
+    const now = new Date();
+    const timestamp = `${now.getDate().toString().padStart(2, "0")}-${(now.getMonth() + 1).toString().padStart(2, "0")}-${now.getFullYear()}`;
+    const zipName = `Reportes Lote ${timestamp}.zip`;
+
     return new NextResponse(zipBuffer as any, {
       headers: {
         "Content-Type": "application/zip",
-        "Content-Disposition": 'attachment; filename="Reportes_Generados.zip"',
+        "Content-Disposition": `attachment; filename="${zipName}"`,
       },
     });
   } catch (error: any) {

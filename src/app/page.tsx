@@ -118,10 +118,15 @@ export default function SMSReportGenerator() {
         // Caso: Varios archivos (ZIP) - Descomprimir en cliente para dar opción "1 a 1"
         const zip = await JSZip.loadAsync(blob)
         
+        // Generar nombre descriptivo para el ZIP en MAYÚSCULAS
+        const now = new Date();
+        const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+        const zipName = `REPORTES_LOTE_${timestamp}.ZIP`;
+
         // Opción para descargar el ZIP completo
         newReports.push({
           url: URL.createObjectURL(blob),
-          filename: `Reportes_Lote_${new Date().getTime()}.zip`,
+          filename: zipName,
           originalName: '📦 DESCARGAR TODO EL LOTE (ZIP)'
         })
 
@@ -132,7 +137,7 @@ export default function SMSReportGenerator() {
             const fileBlob = await file.async('blob')
             newReports.push({
               url: URL.createObjectURL(fileBlob),
-              filename: name,
+              filename: name.toUpperCase(),
               originalName: name
             })
           }
@@ -140,10 +145,19 @@ export default function SMSReportGenerator() {
       } else {
         // Caso: Archivo único (XLSX)
         const url = URL.createObjectURL(blob)
-        const fileName = xlsxFiles[0].name.replace(/\.[^/.]+$/, "")
+        let fileName = xlsxFiles[0].name.replace(/\.[^/.]+$/, "").toUpperCase()
+        
+        // Limpieza de guiones bajos y espacios extras (CONSERVAR guiones medios para la fecha)
+        fileName = fileName.replace(/_/g, " ").replace(/\s+/g, " ").trim()
+        
+        // Evitar duplicar REPORTE
+        if (fileName.startsWith("REPORTE")) {
+          fileName = fileName.replace(/^REPORTE\s*/, "").trim()
+        }
+        
         newReports.push({
           url,
-          filename: `Reporte ${fileName}.xlsx`,
+          filename: `REPORTE ${fileName}.xlsx`,
           originalName: xlsxFiles[0].name
         })
       }
