@@ -1,0 +1,299 @@
+import ExcelJS from 'exceljs';
+import Papa from 'papaparse';
+import JSZip from 'jszip';
+
+// Función interna de normalización
+function normalizeMessage(msg: any) {
+  if (!msg) return "";
+  return msg
+    .toString()
+    .replace(/\r?\n|\r/g, " ")
+    .trim()
+    .replace(/[.,;:]+$/, "")
+    .replace(/\s+/g, " ");
+}
+
+// Nueva función para formatear fecha a DD/MM/YYYY
+function formatToDDMMYYYY(dateStr: string) {
+  if (!dateStr) return "";
+  const parts = dateStr.split(/[-/]/);
+  if (parts.length === 3) {
+    if (parts[0].length === 4) {
+      return `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
+    } else if (parts[2].length === 4) {
+      return `${parts[0].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[2]}`;
+    }
+  }
+  return dateStr;
+}
+
+export async function processReportsBatch(
+  csvFile: File,
+  xlsxFiles: File[],
+  responsible: string,
+  reflection: string,
+  onProgress?: (msg: string) => void
+): Promise<{ blob: Blob, filename: string, isZip: boolean }> {
+  
+  if (onProgress) onProgress("Parseando archivo CSV masivo...");
+  
+  // 1. Parsear CSV
+  const csvText = await csvFile.text();
+  const parsedCsv = Papa.parse(csvText, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (header) => header.trim()
+  });
+  
+  const csvRecordsRaw = parsedCsv.data as any[];
+  
+  const csvRecords = csvRecordsRaw.map((record: any) => {
+    let fecha = record.Fecha || "";
+    let hora = record[""] || record.Hora || "";
+    if ((!hora || hora === "") && fecha.includes(" ")) {
+      const parts = fecha.split(" ");
+      fecha = parts[0];
+      hora = parts[1];
+    }
+    return {
+      ...record,
+      Fecha: formatToDDMMYYYY(fecha),
+      Hora: hora,
+      Destino: record.Destino?.toString().trim() || "",
+      MensajeNormalizado: normalizeMessage(record.Mensaje),
+      MensajeOriginal: record.Mensaje || "",
+    };
+  });
+
+  const zip = new JSZip();
+
+  let index = 0;
+  for (const xlsxFile of xlsxFiles) {
+    index++;
+    if (onProgress) onProgress(`Procesando archivo ${index} de ${xlsxFiles.length}: ${xlsxFile.name}...`);
+    
+    const campaignName = xlsxFile.name
+      .replace(/\.[^/.]+$/, "")
+      .toUpperCase()
+      .replace(/_/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const baseData: { Telefono1: string; Mensaje: string }[] = [];
+    const isCsvBase = xlsxFile.name.toLowerCase().endsWith(".csv");
+
+    if (isCsvBase) {
+      const baseCsvText = await xlsxFile.text();
+      const baseCsvRecords = Papa.parse(baseCsvText, {
+        skipEmptyLines: true,
+      });
+      const rows = baseCsvRecords.data as string[][];
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (row && row[0]) {
+          baseData.push({
+            Telefono1: row[0].toString().trim(),
+            Mensaje: row[1]?.toString().trim() || "",
+          });
+        }
+      }
+    } else {
+      const baseWorkbook = new ExcelJS.Workbook();
+      await baseWorkbook.xlsx.load(await xlsxFile.arrayBuffer());
+      const baseSheet = baseWorkbook.worksheets[0];
+      baseSheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return;
+        const cell1 = row.getCell(1).value;
+        const cell2 = row.getCell(2).value;
+        let tel = (cell1 as any)?.richText
+          ? (cell1 as any).richText.map((t: any) => t.text).join("")
+          : cell1?.toString() || "";
+        let msg = (cell2 as any)?.richText
+          ? (cell2 as any).richText.map((t: any) => t.text).join("")
+          : cell2?.toString() || "";
+        if (tel.trim())
+          baseData.push({ Telefono1: tel.trim(), Mensaje: msg.trim() });
+      });
+    }
+
+    const telefonosBaseSet = new Set(
+      baseData.map((d) =>
+        d.Telefono1.startsWith("506") ? d.Telefono1 : "506" + d.Telefono1,
+      ),
+    );
+    const baseMap = new Map(
+      baseData.map((d) => {
+        const tel = d.Telefono1.startsWith("506")
+          ? d.Telefono1
+          : "506" + d.Telefono1;
+        return [`${tel}|${normalizeMessage(d.Mensaje)}`, d];
+      }),
+    );
+
+    let filteredRows = csvRecords.filter((row: any) => {
+      const key = `${row.Destino}|${row.MensajeNormalizado}`;
+      return baseMap.has(key);
+    });
+
+    if (filteredRows.length === 0 && baseData.length > 0) {
+      filteredRows = csvRecords.filter((row: any) =>
+        telefonosBaseSet.has(row.Destino),
+      );
+    }
+
+    // Generar Excel individual
+    const wb = new ExcelJS.Workbook();
+    
+    const headerFill: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFB4A7D6" } };
+    const headerFont: Partial<ExcelJS.Font> = { name: "Calibri", size: 11, bold: true, color: { argb: "FF000000" } };
+    const headerAlignment: Partial<ExcelJS.Alignment> = { horizontal: "center", vertical: "middle", wrapText: true };
+    const border: Partial<ExcelJS.Borders> = {
+      top: { style: "thin" }, left: { style: "thin" },
+      bottom: { style: "thin" }, right: { style: "thin" },
+    };
+    const cellFont: Partial<ExcelJS.Font> = { name: "Calibri", size: 11 };
+    const cellAlignment: Partial<ExcelJS.Alignment> = { horizontal: "center", vertical: "middle", wrapText: true };
+
+    let idCampana = "";
+    const dateMatch = xlsxFile.name.match(/(\d{2})_(\d{2})_(\d{4})/) || xlsxFile.name.match(/(\d{2})-(\d{2})-(\d{4})/);
+    if (dateMatch) {
+      idCampana = `${dateMatch[3]}${dateMatch[2]}-SMS`;
+    } else {
+      const now = new Date();
+      idCampana = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}-SMS`;
+    }
+
+    const reportSheetName = xlsxFile.name
+      .replace(/\.[^/.]+$/, "")
+      .toUpperCase()
+      .replace(/_/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    // HOJA 1: BASE
+    const wsBase = wb.addWorksheet("BASE");
+    wsBase.views = [{ showGridLines: false }];
+    wsBase.columns = [
+      { header: "telefono", key: "telefono", width: 15 },
+      { header: "SMS", key: "sms", width: 80 },
+    ];
+    wsBase.getRow(1).eachCell((cell) => {
+      cell.fill = headerFill; cell.font = headerFont; cell.alignment = headerAlignment; cell.border = border;
+    });
+    baseData.forEach((d) => {
+      const row = wsBase.addRow({ telefono: d.Telefono1, sms: d.Mensaje });
+      row.eachCell((cell) => { cell.font = cellFont; cell.alignment = cellAlignment; cell.border = border; });
+    });
+
+    // HOJA 2: REPORTE
+    const wsReporte = wb.addWorksheet("REPORTE");
+    wsReporte.views = [{ showGridLines: false }];
+    const headersReporte = ["Fecha", "Hora", "Destino", "Mensaje", "Usuario", "Total enviado", "Estado", "Reflejo", "Campaña", "IdCampaña", "Factura"];
+    wsReporte.columns = headersReporte.map((h, i) => ({
+      header: h, key: h, width: [12, 12, 15, 80, 30, 12, 12, 12, 20, 15, 10][i],
+    }));
+    wsReporte.getRow(1).eachCell((cell) => {
+      cell.fill = headerFill; cell.font = headerFont; cell.alignment = headerAlignment; cell.border = border;
+    });
+
+    filteredRows.forEach((row: any) => {
+      const addedRow = wsReporte.addRow({
+        Fecha: row.Fecha, Hora: row.Hora, Destino: row.Destino, Mensaje: row.MensajeOriginal,
+        Usuario: row.Usuario, "Total enviado": row["Total Enviados"],
+        Estado: row.Estado === "ENVIADO" || row.Estado === "ENTREGADO" ? "Entregado" : "No entregado",
+        Reflejo: reflection, Campaña: reportSheetName, IdCampaña: idCampana, Factura: 0.03,
+      });
+      addedRow.eachCell((cell) => { cell.font = cellFont; cell.alignment = cellAlignment; cell.border = border; });
+    });
+
+    // HOJA 3: RESUMEN
+    const wsResumen = wb.addWorksheet("RESUMEN");
+    wsResumen.views = [{ showGridLines: false }];
+    const headersResumen = ["Base", "Cantidad de la base", "Cantidad de la prosa ( caracteres)", "Cantidad Enviados", "Hora", "Fecha", "Reflejo", "Encargado"];
+    wsResumen.getRow(1).values = headersResumen;
+    wsResumen.columns = [{ width: 50 }, { width: 20 }, { width: 25 }, { width: 18 }, { width: 12 }, { width: 12 }, { width: 12 }, { width: 25 }];
+    wsResumen.getRow(1).eachCell((cell) => {
+      cell.fill = headerFill; cell.font = headerFont; cell.alignment = headerAlignment; cell.border = border;
+    });
+
+    const messageSample = baseData[0]?.Mensaje || "";
+    const fechaEnvio = filteredRows[0]?.Fecha || "";
+    const horaEnvio = filteredRows[0]?.Hora || "";
+
+    const totalIntentos = filteredRows.reduce((acc: number, r: any) => acc + (Number(r["Total Enviados"]) || 0), 0);
+    const totalNoRecibidosRegistrados = filteredRows.filter((r: any) => r.Estado === "ERROR" || r.Estado === "FALLIDO" || r.Estado === "RECHAZADO").length;
+    const totalNoEnviados = (baseData.length - filteredRows.length) + totalNoRecibidosRegistrados;
+    const totalEntregados = totalIntentos - totalNoEnviados;
+
+    const resumenRow2 = wsResumen.addRow([
+      reportSheetName, baseData.length, messageSample.length, totalIntentos,
+      horaEnvio, fechaEnvio, reflection, responsible,
+    ]);
+    resumenRow2.eachCell((cell, colNum) => {
+      cell.font = cellFont;
+      cell.alignment = colNum === 1 || colNum === 8 ? cellAlignment : { horizontal: "center", vertical: "middle" };
+      cell.border = border;
+    });
+
+    const emptyRow = wsResumen.addRow(["", "", "", "", "", "", "", ""]);
+    emptyRow.eachCell((cell) => (cell.border = {}));
+
+    const bgPink: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF2F2" } };
+    const boldFont: Partial<ExcelJS.Font> = { ...cellFont, bold: true };
+
+    const row4 = wsResumen.addRow(["Total enviados ( no recibidos)", totalNoEnviados]);
+    [1, 2].forEach((col) => {
+      const cell = row4.getCell(col); cell.fill = bgPink; cell.font = boldFont; cell.border = border;
+      cell.alignment = col === 1 ? cellAlignment : { horizontal: "center", vertical: "middle" };
+    });
+
+    const row5 = wsResumen.addRow(["Total Entregados", totalEntregados]);
+    [1, 2].forEach((col) => {
+      const cell = row5.getCell(col); cell.fill = bgPink; cell.font = boldFont; cell.border = border;
+      cell.alignment = col === 1 ? cellAlignment : { horizontal: "center", vertical: "middle" };
+    });
+
+    const row6 = wsResumen.addRow(["Total de mensajes No Enviados (duplicados/excluidos)", 0]);
+    [1, 2].forEach((col) => {
+      const cell = row6.getCell(col); cell.fill = bgPink; cell.font = boldFont; cell.border = border;
+      cell.alignment = col === 1 ? cellAlignment : { horizontal: "center", vertical: "middle" };
+    });
+
+    const excelBuffer = await wb.xlsx.writeBuffer();
+
+    if (xlsxFiles.length === 1) {
+      if (onProgress) onProgress("Generando archivo final...");
+      let finalCampaignName = campaignName.toUpperCase();
+      if (finalCampaignName.startsWith("REPORTE")) {
+        finalCampaignName = finalCampaignName.replace(/^REPORTE\s*/, "").trim();
+      }
+      const safeFilename = `REPORTE ${finalCampaignName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\x20-\x7E]/g, "")}.xlsx`;
+      
+      return {
+        blob: new Blob([excelBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+        filename: safeFilename,
+        isZip: false
+      };
+    }
+
+    let zipInternalName = campaignName.toUpperCase();
+    if (zipInternalName.startsWith("REPORTE")) {
+      zipInternalName = zipInternalName.replace(/^REPORTE\s*/, "").trim();
+    }
+    const zipFilename = `REPORTE ${zipInternalName}.xlsx`;
+    zip.file(zipFilename, excelBuffer);
+  }
+
+  if (onProgress) onProgress("Comprimiendo todos los archivos en un ZIP...");
+  const zipBlob = await zip.generateAsync({ type: "blob" });
+  
+  const now = new Date();
+  const timestamp = `${now.getDate().toString().padStart(2, "0")}-${(now.getMonth() + 1).toString().padStart(2, "0")}-${now.getFullYear()}`;
+  const zipName = `Reportes Lote ${timestamp}.zip`;
+
+  return {
+    blob: zipBlob,
+    filename: zipName,
+    isZip: true
+  };
+}

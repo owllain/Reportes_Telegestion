@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/use-toast'
 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import JSZip from 'jszip'
+import { processReportsBatch } from '@/lib/reportProcessor'
 
 // Dev: Alvaro Enrique Cascante Moraga
 // Fecha: 05-03-2026
@@ -76,45 +77,19 @@ export default function SMSReportGenerator() {
     const finalResponsible = responsible === 'other' ? customResponsible : responsible
 
     try {
-      setProcessingStatus(`Subiendo ${xlsxFiles.length} archivos y procesando lote masivo...`)
+      setProcessingStatus(`Iniciando procesamiento de ${xlsxFiles.length} archivos de forma local...`)
 
-      const formData = new FormData()
-      formData.append('csvFile', csvFile)
-      xlsxFiles.forEach(file => {
-        formData.append('xlsxFiles', file)
-      })
-      formData.append('responsible', finalResponsible)
-      formData.append('reflection', reflection)
+      const { blob, filename, isZip } = await processReportsBatch(
+        csvFile,
+        xlsxFiles,
+        finalResponsible,
+        reflection,
+        (msg) => setProcessingStatus(msg)
+      );
 
-      const response = await fetch('/api/generate-report', {
-        method: 'POST',
-        body: formData,
-      })
-
-      if (!response.ok) {
-        let errorMessage = 'Error al procesar el lote de reportes'
-        try {
-          const contentType = response.headers.get('content-type')
-          if (contentType && contentType.includes('application/json')) {
-            const errorData = await response.json()
-            errorMessage = errorData.error || errorMessage
-          } else {
-            const errorText = await response.text()
-            errorMessage = errorText || errorMessage
-          }
-        } catch (e) {}
-
-        if (response.status === 413 || errorMessage.includes('red corporativa')) {
-          throw new Error('PROBLEMA DE RED: La red corporativa bloqueó la subida masiva por el tamaño. Intenta con menos archivos.')
-        }
-        throw new Error(errorMessage)
-      }
-
-      const contentType = response.headers.get('content-type')
-      const blob = await response.blob()
       const newReports: { url: string; filename: string; originalName: string }[] = []
 
-      if (contentType && contentType.includes('application/zip')) {
+      if (isZip) {
         // Caso: Varios archivos (ZIP) - Descomprimir en cliente para dar opción "1 a 1"
         const zip = await JSZip.loadAsync(blob)
         
@@ -145,19 +120,10 @@ export default function SMSReportGenerator() {
       } else {
         // Caso: Archivo único (XLSX)
         const url = URL.createObjectURL(blob)
-        let fileName = xlsxFiles[0].name.replace(/\.[^/.]+$/, "").toUpperCase()
-        
-        // Limpieza de guiones bajos y espacios extras (CONSERVAR guiones medios para la fecha)
-        fileName = fileName.replace(/_/g, " ").replace(/\s+/g, " ").trim()
-        
-        // Evitar duplicar REPORTE
-        if (fileName.startsWith("REPORTE")) {
-          fileName = fileName.replace(/^REPORTE\s*/, "").trim()
-        }
         
         newReports.push({
           url,
-          filename: `REPORTE ${fileName}.xlsx`,
+          filename: filename,
           originalName: xlsxFiles[0].name
         })
       }
